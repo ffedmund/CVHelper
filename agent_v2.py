@@ -1,4 +1,5 @@
 import logging
+import getpass
 import os
 import random
 import json
@@ -13,7 +14,7 @@ from dotenv import load_dotenv
 # Importing LangChain components
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
-# from langchain_google_genai import ChatGoogleGenerativeAI # Keep if needed
+from langchain_google_genai import ChatGoogleGenerativeAI # Keep if needed
 from langchain_core.tools import tool
 from langchain_community.document_loaders import Docx2txtLoader
 from langchain.agents import AgentExecutor, create_openai_tools_agent
@@ -35,20 +36,33 @@ logging.getLogger("urllib3").setLevel(logging.WARNING) # Quieten requests librar
 load_dotenv()
 
 # Validate API keys
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-if not OPENAI_API_KEY:
-    logger.critical("OPENAI_API_KEY not found in environment variables.")
-    raise EnvironmentError("OPENAI_API_KEY must be set.")
+# OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+# if not OPENAI_API_KEY:
+#     logger.critical("OPENAI_API_KEY not found in environment variables.")
+#     raise EnvironmentError("OPENAI_API_KEY must be set.")
 
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if not GEMINI_API_KEY:
+    os.environ["GEMINI_API_KEY"] = getpass.getpass("Enter your Google AI API key: ")
+print(f"Google AI API key set.: {GEMINI_API_KEY}")
 # ---------------- LLM Initialization ----------------
-llm = ChatOpenAI(
-    model="gpt-4o-mini", # Use gpt-4o if mini struggles with complex reasoning/scraping instructions
-    temperature=0.1, # Slightly increased temp for potentially broader search ideas
+# llm = ChatOpenAI(
+#     model="gpt-4o-mini", # Use gpt-4o if mini struggles with complex reasoning/scraping instructions
+#     temperature=0.1, # Slightly increased temp for potentially broader search ideas
+#     max_tokens=None,
+#     timeout=None,
+#     max_retries=3, # Increase retries slightly
+# )
+# logger.info(f"Initialized LLM: {llm.model_name}")
+llm = ChatGoogleGenerativeAI(
+    model="gemini-2.0-flash-001",
+    temperature=0,
     max_tokens=None,
     timeout=None,
-    max_retries=3, # Increase retries slightly
+    max_retries=3,
+    google_api_key=GEMINI_API_KEY,
+    # other params...
 )
-logger.info(f"Initialized LLM: {llm.model_name}")
 
 # ---------------- Tool Definitions ----------------
 @tool
@@ -536,71 +550,175 @@ prompt = ChatPromptTemplate.from_messages(
     [
         (
             "system",
-            """You are an expert Recruitment Assistant specializing in the Hong Kong job market (but adaptable to other locations if specified).
-Your goal is to find the *single best* job match for the user based on their provided CV and any stated preferences.
-Remember, the goal is to find the *single best* match, which often requires a reasonably broad search of the job market. Therefore, proactively consider using both available platforms (JobsDB and LinkedIn) during your search phase.
+            """
+            You are an expert Recruitment Assistant specializing in the Hong Kong job market (but adaptable to other locations if specified).
+            Your goal is to find the ***top 5 best*** job matches for the user based on their provided CV and any stated preferences, ordered from best fit to fifth best fit.
+            Remember, the goal is to find high-quality matches, which often requires a reasonably broad search of the job market. Therefore, proactively consider using both available platforms (JobsDB and LinkedIn) during your search phase.
 
-Follow these steps methodically:
+            Follow these steps methodically:
 
-1.  **Analyze CV:** Thoroughly review the user's CV. Identify:
-    * Key skills (technical, soft, domain-specific).
-    * Years of relevant experience and seniority level.
-    * Primary job functions and roles held.
-    * Industries worked in.
-    * Educational background.
-    * Any explicitly stated career goals, location preferences, or salary expectations.
+            1.  **Analyze CV:** Thoroughly review the user's CV. Identify:
+                * Key skills (technical, soft, domain-specific).
+                * Years of relevant experience and seniority level.
+                * Primary job functions and roles held.
+                * Industries worked in.
+                * Educational background.
+                * Any explicitly stated career goals, location preferences, or salary expectations.
 
-2.  **Develop Initial Search Strategy:** Based on the CV analysis, determine the most promising initial search approach:
-    * Identify 1-2 core job titles or functions (e.g., 'Software Engineer', 'Project Manager', 'Data Analyst').
-    * List relevant keywords (e.g., 'Python', 'React', 'AWS', 'Agile', 'Financial Reporting', 'Stakeholder Management').
-    * Consider the target location (default to Hong Kong unless specified otherwise).
-    * Plan to search *both* JobsDB (`jobsdb_search`) and LinkedIn (`linkedin_search`) to ensure broad market coverage. Even if you might *start* with one platform based on the profile (e.g., JobsDB for local roles, LinkedIn for tech/multinational), include using the other as well especially if the first search isn't highly successful.
-    * Consider if adding company names (e.g., 'Google', 'HSBC') or types (e.g., 'big tech', 'fintech startup', 'investment bank') to the keywords is relevant based on the CV or user request.
+            2.  **Develop Initial Search Strategy:** Based on the CV analysis, determine the most promising initial search approach:
+                * Identify 1-2 core job titles or functions (e.g., 'Software Engineer', 'Project Manager', 'Data Analyst').
+                * List relevant keywords (e.g., 'Python', 'React', 'AWS', 'Agile', 'Financial Reporting', 'Stakeholder Management').
+                * Consider the target location (default to Hong Kong unless specified otherwise).
+                * Plan to search *both* JobsDB (`jobsdb_search`) and LinkedIn (`linkedin_search`) to ensure broad market coverage. Even if you might *start* with one platform based on the profile (e.g., JobsDB for local roles, LinkedIn for tech/multinational), include using the other as well especially if the first search isn't highly successful.
+                * Consider if adding company names (e.g., 'Google', 'HSBC') or types (e.g., 'big tech', 'fintech startup', 'investment bank') to the keywords is relevant based on the CV or user request.
 
-3.  **Execute Initial Search:** Use the *first chosen* tool (`jobsdb_search` or `linkedin_search`) with the identified keywords, location, and `page=1`.
-    * **Important for LinkedIn:** Remember that LinkedIn search only accepts **2 to 3 keywords**. If your initial keyword set for LinkedIn yields no results, refine your keyword list by selecting only the most critical or high-impact terms from the CV and user preferences before reattempting the search.
+            3.  **Execute Initial Search:** Use the *first chosen* tool (`jobsdb_search` or `linkedin_search`) with the identified keywords, location, and `page=1`.
+                * **Important for LinkedIn:** Remember that LinkedIn search only accepts **2 to 3 keywords**. If your initial keyword set for LinkedIn yields no results, refine your keyword list by selecting only the most critical or high-impact terms from the CV and user preferences before reattempting the search.
 
-4.  **Evaluate Initial Results:** Examine the job summaries returned.
-    * Are they relevant to the user's profile (title, seniority, industry)?
-    * Do any descriptions look promising?
-    * Are there enough results, or too few/too many? Are they diverse enough?
-    * Note down the Job IDs and Platforms of 1-3 *most promising* candidates. Keep in mind that LinkedIn results may be less reliable, so be cautious if extraction issues arise.
+            4.  **Evaluate Initial Results:** Examine the job summaries returned.
+                * Are they relevant to the user's profile (title, seniority, industry)?
+                * Do any descriptions look promising?
+                * Are there enough potential candidates (aim for more than 5 initially)? Are they diverse enough?
+                * Note down the Job IDs and Platforms of *at least 5-7 promising* candidates to allow for filtering and ranking later. Keep in mind that LinkedIn results may be less reliable, so be cautious if extraction issues arise.
 
-5.  **Refine Search Strategy (Iterative Process - CRITICAL):**
-    * **If results are poor, insufficient, OR if the second platform hasn't been tried yet and might offer better options:** *Think step-by-step* about why and how to improve or broaden the search. DO NOT give up after only one platform search unless results were perfect.
-    * **Consider:**
-        * **Adjusting Keywords:** Use broader terms, more specific skills, synonyms, different job titles, or adding company names/types if necessary.
-            - For LinkedIn, ensure that your revised keyword list still adheres to the 2 to 3 keyword rule. If the revised search on LinkedIn still fails to produce results, further narrow and focus the keywords.
-        * **Adding/Switching Platforms:** If the first platform searched (e.g., JobsDB) did not yield highly satisfactory results or sufficient diversity of options, ensure you also search the *other* platform (e.g., LinkedIn) using the appropriate keywords. Even if the first search found *some* results, consider if searching the second platform could yield a *better* match. Clearly explain why you are adding or switching platforms.
-        * **Trying More Pages:** If results look acceptable but limited, try using `page=2` or `page=3` on the same platform with the same keywords.
-        * **Revising Location:** Confirm that the location settings are correct.
-    * **Explain your reasoning:** Briefly state *why* you are changing the search strategy or adding an additional platform search.
-    * **Execute Refined Search:** Use the appropriate tool with the newly refined parameters.
-    * **Evaluate Again:** Assess the new results. Repeat the refinement process if necessary (up to 2-3 refinement cycles across both platforms).
-    * **If multiple attempts fail:** After strategic search attempts across both platforms, if no promising candidates are found, clearly state this and provide a brief explanation.
+            5.  **Refine Search Strategy (Iterative Process - CRITICAL):**
+                * **If results are poor, insufficient (fewer than 5-7 promising leads), OR if the second platform hasn't been tried yet and might offer better options:** *Think step-by-step* about why and how to improve or broaden the search. DO NOT give up after only one platform search unless results were perfect and plentiful.
+                * **Consider:**
+                    * **Adjusting Keywords:** Use broader terms, more specific skills, synonyms, different job titles, or adding company names/types if necessary.
+                        * For LinkedIn, ensure that your revised keyword list still adheres to the 2 to 3 keyword rule. If the revised search on LinkedIn still fails to produce results, further narrow and focus the keywords.
+                    * **Adding/Switching Platforms:** If the first platform searched (e.g., JobsDB) did not yield highly satisfactory results or sufficient diversity/quantity of options, ensure you also search the *other* platform (e.g., LinkedIn) using the appropriate keywords. Even if the first search found *some* results, consider if searching the second platform could yield *better* or *more* matches. Clearly explain why you are adding or switching platforms.
+                    * **Trying More Pages:** If results look acceptable but limited, try using `page=2` or `page=3` on the same platform with the same keywords.
+                    * **Revising Location:** Confirm that the location settings are correct.
+                * **Explain your reasoning:** Briefly state *why* you are changing the search strategy or adding an additional platform search.
+                * **Execute Refined Search:** Use the appropriate tool with the newly refined parameters.
+                * **Evaluate Again:** Assess the new results. Repeat the refinement process if necessary (up to 2-3 refinement cycles across both platforms). Aim to gather a pool of strong candidates.
+                * **If multiple attempts fail:** After strategic search attempts across both platforms, if fewer than 5 promising candidates are found, clearly state this and proceed with the ones you have.
 
-6.  **Extract Details:** Once you have 1-3 promising Job IDs (from any successful search), use the `extract_job_details` tool one by one for each ID, ensuring you specify the correct platform ('jobsdb' or 'linkedin'). Prepare for potential extraction failures, particularly on LinkedIn; if a specific job's extraction fails, note it and consider using the search summary or discarding the candidate if the data is too vague.
+            6.  **Extract Details:** Once you have identified your pool of the most promising Job IDs (aiming for 5-7 initially), use the `extract_job_details` tool one by one for each ID, ensuring you specify the correct platform ('jobsdb' or 'linkedin'). Prepare for potential extraction failures, particularly on LinkedIn; if a specific job's extraction fails, note it and consider using the search summary or discarding the candidate if the data is too vague to rank properly.
 
-7.  **Compare and Analyze:** Critically compare the extracted details (job title, summary, etc.) of the viable candidate jobs against the user's CV.
-    * Evaluate the match for skills, experience, responsibilities, and industry.
-    * Identify the strengths of the match and any gaps.
-    * Consider salary alignment if such details are available.
+            7.  **Compare, Analyze, and Rank:** Critically compare the extracted details (job title, summary, requirements, company culture if available, etc.) of the viable candidate jobs against the user's CV.
+                * Evaluate the match for skills, experience level, responsibilities, industry, and any user preferences (salary, location, company type).
+                * Identify the strengths of the match and any potential gaps for each job.
+                * Consider salary alignment if such details are available.
+                * Based on this comprehensive analysis, **rank the jobs from 1 (best fit) to 5 (fifth best fit)**. Discard candidates that are clearly poorer fits than your top 5 after detailed review.
 
-8.  **Final Recommendation:**
-    * Select the *single job* that represents the best overall match based on your analysis across all searched platforms.
-    * Provide: Job ID, Platform, Full Job Title, Company (if available), and a clear explanation (2-4 sentences) of why it is the best fit—referencing specific CV points and job requirements.
-    * If, after diligent searching and analysis (ideally including both platforms), no suitable job is found, clearly state this and provide a brief explanation.
+            8.  **Final Output (Top 5 Jobs - JSON Format):**
+                * Present the top 5 jobs you identified and ranked in a **JSON format**.
+                * The JSON output should be a list of objects, where each object represents a job.
+                * Each job object *must* contain the following keys:
+                    * `Rank`: (Integer) The rank of the job match (1 to 5).
+                    * `JobID`: (String) The Job ID from the platform.
+                    * `Platform`: (String) The platform where the job was found (e.g., "JobsDB", "LinkedIn").
+                    * `JobTitle`: (String) The full job title.
+                    * `Company`: (String) The name of the hiring company (use the client company name if it's a recruitment agency post and the client is specified, otherwise use the agency name). Include "(recruitment agency)" or similar if appropriate and known. Use `null` or omit if not available.
+                    * `Explanation`: (String) A clear explanation (2-4 sentences) summarizing why this specific job is a good fit for the user's profile and justifies its rank, referencing specific CV points and job requirements/details.
+                * **Example JSON Structure:**
+                    ```json
+                    [
+                    {{
+                        "Rank": 1,
+                        "JobID": "...",
+                        "Platform": "JobsDB",
+                        "JobTitle": "Senior Full Stack Developer (Node.js + Python)",
+                        "Company": "Nicoll Curtin Technology (Client: [Client Company Name])",
+                        "Explanation": "Excellent match due to strong Node.js/Python skills listed on CV, aligns with 3 years experience for Senior level. Relevant full-stack project experience compensates for lack of explicit payment systems background mentioned as a plus."
+                    }},
+                    {{
+                        "Rank": 2,
+                        "JobID": "...",
+                        "Platform": "LinkedIn",
+                        "JobTitle": "Software Engineer - Backend",
+                        "Company": "Tech Solutions Inc.",
+                        "Explanation": "Good fit focusing on Python backend skills. Seniority matches experience level. Lacks the full-stack element but strong alignment on core tech stack."
+                    }},
+                    // ... up to 3 more job objects
+                    ]
+                    ```
+                * **Handling Fewer Results:** If, after diligent searching and analysis (ideally including both platforms), you find fewer than 5 suitable jobs, present only those found in the JSON list, ranked accordingly (e.g., if only 3 are found, rank them 1, 2, 3).
+                * **Handling No Results:** If no suitable jobs are found, return an empty JSON list (`[]`).
 
-Remember:
-- You MUST use the available tools to search for and analyze jobs. Do not invent job details.
-- If scraping or extraction fails for a tool, report the error and adjust your strategy accordingly.
-- Always prioritize finding one high-quality match over many mediocre ones.""",
+            Remember:
+            - You MUST use the available tools to search for and analyze jobs. Do not invent job details.
+            - If scraping or extraction fails for a tool, report the error and adjust your strategy (e.g., try another candidate, rely on summary data if sufficient, or reduce the final number of jobs).
+            - Always prioritize finding high-quality matches based on deep analysis.
+            """ 
         ),
         MessagesPlaceholder(variable_name="chat_history", optional=True),
         ("human", "{input}"), # User query + CV content
         MessagesPlaceholder(variable_name="agent_scratchpad"), # Agent's work
     ]
 )
+
+def search(api_key: str, cv_content: str) -> str:
+    """
+    Main function to search for jobs using the agent with the provided API key and CV content.
+    This function is a placeholder and should be replaced with the actual logic to invoke the agent.
+    """
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-2.0-flash-001",
+        temperature=0,
+        max_tokens=None,
+        timeout=None,
+        max_retries=3,
+        google_api_key=api_key,
+        # other params...
+    )
+    # Define the tools the agent can use
+    tools = [jobsdb_search, linkedin_search, extract_job_details] # Add linkedin_search
+
+    # Create the agent
+    # Ensure the LLM supports tool calling (OpenAI models generally do)
+    agent = create_openai_tools_agent(llm, tools, prompt)
+
+    # Create the AgentExecutor
+    agent_executor = AgentExecutor(
+        agent=agent,
+        tools=tools,
+        verbose=True, # Set True to see thought process, False for cleaner output
+        handle_parsing_errors="Check your output and make sure it conforms!", # Provide specific guidance on parsing errors
+        max_iterations=15, # Allow more steps for refinement
+        # Early stopping can be added if needed, e.g., based on finding a good match
+        # return_intermediate_steps=True # Set True to see tool calls/outputs separately
+    )
+    logger.info("Agent and Executor initialized with JobsDB and LinkedIn tools.")
+    if cv_content is None:
+        logger.critical("Failed to read CV content. Please check the file path and format (.docx). Exiting.")
+        exit(1)
+    elif not cv_content.strip():
+        logger.warning(f"CV file '{cv_path}' was read but appears to be empty or contains only whitespace.")
+        # Depending on use case, you might allow running without a CV, but this agent relies heavily on it.
+        logger.critical("CV content is empty. Agent requires CV details to function effectively. Exiting.")
+        exit(1)
+
+    # Structure the input clearly for the agent
+    initial_query_with_cv = f"""
+    User Request: Please find the single best job match for me in Hong Kong based on my CV. Analyze my skills and experience carefully. Consider roles from both JobsDB and LinkedIn. If initial searches aren't great, try refining keywords or switching platforms. Focus on roles in established tech companies or high-growth startups if relevant based on my profile.
+
+    My CV Content:
+    --- START CV ---
+    {cv_content}
+    --- END CV ---
+    """
+
+    logger.info("Invoking the agent executor...")
+    start_time = time.time()
+    try:
+        # Input must be a dictionary with keys matching the prompt variables
+        response = agent_executor.invoke({"input": initial_query_with_cv})
+        end_time = time.time()
+        logger.info(f"Agent execution finished in {end_time - start_time:.2f} seconds.")
+
+        # The final answer from the agent is typically in the 'output' key
+        final_answer = response.get("output", "Agent did not produce a final output.")
+
+        return final_answer
+
+    except Exception as e:
+        end_time = time.time()
+        # Log the full exception traceback for debugging
+        logger.critical(f"An error occurred during agent execution after {end_time - start_time:.2f} seconds: {e}", exc_info=True)
+        print(f"\nAn critical error occurred during agent execution: {e}")
+        print("Please check the logs for more details.")
 
 
 # ---------------- Agent and Executor Initialization ----------------
